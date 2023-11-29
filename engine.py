@@ -139,7 +139,7 @@ class Engine():
             
         return res
 
-    def create_video(self, res, w, h, video_name='output_video_test'):
+    def create_video(self, res, w, h, video_name='output_video_demo'):
 
         output_video_path = f'{video_name}.avi'
 
