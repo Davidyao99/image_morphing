@@ -22,6 +22,10 @@ from train.detector import ResNetDetector
 
 class Engine():
 
+    """
+    Takes in a directory of images and morphs them into a video
+    """
+
     def __init__(self, image_dir, video_output_path='assets/output/output_video', device='cuda:0'):
         self.image_dir = image_dir
         self.video_output_path = video_output_path
@@ -168,6 +172,10 @@ class Engine():
         video_writer.release()
 
     def run(self, custom=True):
+
+        """
+        custom: whether to use custom detector or not
+        """
 
         #get all images in directory
         images_path = os.listdir(self.image_dir)
