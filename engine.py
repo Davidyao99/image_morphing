@@ -18,13 +18,31 @@ sys.path.append("spiga")
 from spiga.inference.config import ModelConfig
 from spiga.inference.framework import SPIGAFramework
 
+from train.detector import ResNetDetector
+
 class Engine():
 
-    def __init__(self, image_dir):
+    def __init__(self, image_dir, video_output_path='assets/output/output_video', device='cuda:0'):
         self.image_dir = image_dir
+        self.video_output_path = video_output_path
 
-        self.face_detector = MTCNN(device='cuda:0')
+        self.device = device
+        self.face_detector = MTCNN(self.device)
         self.kpt_detector = SPIGAFramework(ModelConfig('wflw'))
+        self.custom_detector = ResNetDetector('saved_models/resnet18_pretrain_model2.pt', device)
+        self.size = 512
+
+    def get_kpts_custom(self, imgs):
+        
+        imgs = np.array([np.asarray(img) for img in imgs])
+        imgs = imgs / 255.0
+        kpts = self.custom_detector.get_kpts(imgs)
+
+        kpts_corners = np.array([[0,0],[self.size,0],[0,self.size],[self.size,self.size]])
+        kpts_corners = np.repeat(kpts_corners[None,:,:], repeats=kpts.shape[0], axis=0)
+        kpts = np.concatenate((kpts, kpts_corners), axis=1) # add 4 corners to all images
+
+        return kpts # numpy array of size  b x 72 x 2
 
     def get_kpts(self, imgs):
         
@@ -32,15 +50,13 @@ class Engine():
 
         all_landmarks = []
 
-        w,h = imgs[0].size
-
         for i,bbox in enumerate(bboxs):
             features = self.kpt_detector.inference(np.array(imgs[i]), [bbox[0]])
             landmarks = np.array(features['landmarks'][0])
-            landmarks = np.vstack((landmarks, np.array([[0,0],[w,0],[0,h],[w,h]])))
+            landmarks = np.vstack((landmarks, np.array([[0,0],[self.size,0],[0,self.size],[self.size,self.size]])))
             all_landmarks.append(landmarks)
 
-        return all_landmarks # list of n numpy arrays of 98 x 2
+        return all_landmarks # list of n numpy arrays of 102 x 2
 
     def generate_triangle_mask(self, tri, P):
     
@@ -106,8 +122,6 @@ class Engine():
 
         for t in np.arange(0.0, 1.0, step_size):
             
-            h,w,_ = im1.shape
-            
             frame_res = np.zeros(im1.shape)
             
             kp_inter = (1-t) * kp1 + t * kp2
@@ -124,14 +138,14 @@ class Engine():
                 tri_2 = kp2[triangles[i]]
                 tri_inter = kp_inter[triangles[i]]
                 
-                x = np.arange(w)
-                y = np.arange(h)
+                x = np.arange(self.size)
+                y = np.arange(self.size)
                 xv, yv = np.meshgrid(x, y)
                 P = np.stack((xv,yv), axis=-1).reshape(-1,2) # gets a (hxw,2) numpy array of all coordinates of image
                 
-                mask = self.generate_triangle_mask(tri_inter, P).reshape((h,w)) # gets binary triangle mask for image1
-                res_im1[mask] = cv2.warpAffine(im1, affine_T_1, (w, h), cv2.WARP_INVERSE_MAP)[mask]
-                res_im2[mask] = cv2.warpAffine(im2, affine_T_2, (w, h), cv2.WARP_INVERSE_MAP)[mask]
+                mask = self.generate_triangle_mask(tri_inter, P).reshape((self.size, self.size)) # gets binary triangle mask for image1
+                res_im1[mask] = cv2.warpAffine(im1, affine_T_1, (self.size, self.size), cv2.WARP_INVERSE_MAP)[mask]
+                res_im2[mask] = cv2.warpAffine(im2, affine_T_2, (self.size, self.size), cv2.WARP_INVERSE_MAP)[mask]
             res_im = (res_im1 * (1-t) + res_im2 * t).astype(np.uint8)
             res.append(res_im)
 
@@ -139,13 +153,13 @@ class Engine():
             
         return res
 
-    def create_video(self, res, w, h, video_name='output_video_demo'):
+    def create_video(self, res):
 
-        output_video_path = f'{video_name}.avi'
+        output_video_path = f'{self.video_output_path}.avi'
 
         # Create a VideoWriter object
         fourcc = cv2.VideoWriter_fourcc(*'XVID')  # You can choose another codec based on your needs
-        video_writer = cv2.VideoWriter(output_video_path, fourcc, 20.0,  (w, h))
+        video_writer = cv2.VideoWriter(output_video_path, fourcc, 20.0,  (self.size, self.size))
 
         # Iterate through each frame and write it to the video
         for frame in res:
@@ -153,21 +167,21 @@ class Engine():
             video_writer.write(frame)
         video_writer.release()
 
-    def run(self):
+    def run(self, custom=True):
 
         #get all images in directory
         images_path = os.listdir(self.image_dir)
 
-        im1 = Image.open(os.path.join(self.image_dir, images_path[0]))
-        w, h = (448, 488)
+        images_all = []
 
-        images_all = [im1.resize((w,h))]
-
-        for i in range(len(images_path)-1):
-            im2 = Image.open(os.path.join(self.image_dir, images_path[i+1])).resize((w, h))
+        for image_path in images_path:
+            im2 = Image.open(os.path.join(self.image_dir, image_path)).resize((self.size, self.size))
             images_all.append(im2)
 
-        kpts = self.get_kpts(images_all) # batch process at once
+        if custom:
+            kpts = self.get_kpts_custom(images_all)
+        else:
+            kpts = self.get_kpts(images_all)
 
         all_res = []
 
@@ -176,9 +190,9 @@ class Engine():
             res = self.morph(np.array(images_all[i]), np.array(images_all[i+1]), kpts[i], kpts[i+1])
             all_res += res
 
-        self.create_video(all_res, w, h)
+        self.create_video(all_res)
 
 
 if __name__ == '__main__':
-    engine = Engine('assets')
-    engine.run()
+    engine = Engine('assets/input_out', 'assets/output/output_video_out')
+    engine.run(False)
