@@ -1,3 +1,4 @@
 .ipynb_checkpoints/
-data/
+train/images
+train/json
 __pycache__/
