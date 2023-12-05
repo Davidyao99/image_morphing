@@ -1,5 +1,5 @@
 # image_morphing
-
+`git submodule update --init` -> initialize submodule SPIGA
 `conda env create --name morph --file=environment.yml`
 
 # Notebooks
